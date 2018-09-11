@@ -72,48 +72,45 @@ class Notifications {
 	/**
 	 * send server-to-server share to remote server
 	 *
+	 * @param Address $shareWithAddress
+	 * @param Address $ownerAddress
+	 * @param Address $sharedByAddress
 	 * @param string $token
 	 * @param string $shareWith
 	 * @param string $name
 	 * @param int $remote_id
-	 * @param string $owner
-	 * @param string $ownerFederatedId
-	 * @param string $sharedBy
-	 * @param string $sharedByFederatedId
+	 *
 	 * @return bool
+	 *
 	 * @throws \OC\HintException
 	 * @throws \OC\ServerNotAvailableException
 	 */
-	public function sendRemoteShare($token, $shareWith, $name, $remote_id, $owner, $ownerFederatedId, $sharedBy, $sharedByFederatedId) {
-		list($user, $remote) = $this->addressHandler->splitUserRemote($shareWith);
-
-		if ($user && $remote) {
-			$url = $remote;
-			$local = $this->addressHandler->generateRemoteURL();
-
-			$fields = [
-				'shareWith' => $user,
-				'token' => $token,
-				'name' => $name,
-				'remoteId' => $remote_id,
-				'owner' => $owner,
-				'ownerFederatedId' => $ownerFederatedId,
-				'sharedBy' => $sharedBy,
-				'sharedByFederatedId' => $sharedByFederatedId,
-				'remote' => $local,
-			];
-
-			$url = $this->addressHandler->removeProtocolFromUrl($url);
-			$result = $this->tryHttpPostToShareEndpoint($url, '', $fields);
-			$status = \json_decode($result['result'], true);
-
-			if ($result['success'] && ($status['ocs']['meta']['statuscode'] === 100 || $status['ocs']['meta']['statuscode'] === 200)) {
-				\OC_Hook::emit('OCP\Share', 'federated_share_added', ['server' => $remote]);
-				return true;
+	public function sendRemoteShare(Address $shareWithAddress,
+		Address $ownerAddress,
+		Address $sharedByAddress,
+		$token,
+		$name,
+		$remote_id
+	) {
+		$remoteShareSuccess = false;
+		if ($shareWithAddress->getUserId() && $shareWithAddress->getCloudId()) {
+			$remoteShareSuccess = $this->sendOcmRemoteShare(
+				$shareWithAddress, $ownerAddress, $sharedByAddress, $token, $name, $remote_id
+			);
+			if (!$remoteShareSuccess) {
+				$remoteShareSuccess = $this->sendPreOcmRemoteShare(
+					$shareWithAddress, $ownerAddress, $sharedByAddress, $token, $name, $remote_id
+				);
 			}
 		}
-
-		return false;
+		if ($remoteShareSuccess) {
+			\OC_Hook::emit(
+				'OCP\Share',
+				'federated_share_added',
+				['server' => $shareWithAddress->getHostName()]
+			);
+		}
+		return $remoteShareSuccess;
 	}
 
 	/**
@@ -141,11 +138,10 @@ class Notifications {
 		$status = \json_decode($result['result'], true);
 
 		$httpRequestSuccessful = $result['success'];
-		$ocsCallSuccessful = $status['ocs']['meta']['statuscode'] === 100 || $status['ocs']['meta']['statuscode'] === 200;
 		$validToken = isset($status['ocs']['data']['token']) && \is_string($status['ocs']['data']['token']);
 		$validRemoteId = isset($status['ocs']['data']['remoteId']);
 
-		if ($httpRequestSuccessful && $ocsCallSuccessful && $validToken && $validRemoteId) {
+		if ($httpRequestSuccessful && $this->isOcsStatusOk($status) && $validToken && $validRemoteId) {
 			return [
 				$status['ocs']['data']['token'],
 				(int)$status['ocs']['data']['remoteId']
@@ -218,12 +214,15 @@ class Notifications {
 	 * inform remote server whether server-to-server share was accepted/declined
 	 *
 	 * @param string $remote
-	 * @param string $token
 	 * @param int $remoteId Share id on the remote host
-	 * @param string $action possible actions: accept, decline, unshare, revoke, permissions
+	 * @param string $token
+	 * @param string $action possible actions:
+	 * 	                     accept, decline, unshare, revoke, permissions
 	 * @param array $data
 	 * @param int $try
+	 *
 	 * @return boolean
+	 *
 	 * @throws \Exception
 	 */
 	public function sendUpdateToRemote($remote, $remoteId, $token, $action, $data = [], $try = 0) {
@@ -236,11 +235,7 @@ class Notifications {
 		$result = $this->tryHttpPostToShareEndpoint(\rtrim($url, '/'), '/' . $remoteId . '/' . $action, $fields);
 		$status = \json_decode($result['result'], true);
 
-		if ($result['success'] &&
-			($status['ocs']['meta']['statuscode'] === 100 ||
-				$status['ocs']['meta']['statuscode'] === 200
-			)
-		) {
+		if ($result['success'] && $this->isOcsStatusOk($status)) {
 			return true;
 		} elseif ($try === 0) {
 			// only add new job on first try
@@ -278,7 +273,7 @@ class Notifications {
 	 * @return array
 	 * @throws \Exception
 	 */
-	protected function tryHttpPostToShareEndpoint($remoteDomain, $urlSuffix, array $fields) {
+	protected function tryHttpPostToShareEndpoint($remoteDomain, $urlSuffix, array $fields, $useOcm = false) {
 		$client = $this->httpClientService->newClient();
 		$protocol = 'https://';
 		$result = [
@@ -288,14 +283,21 @@ class Notifications {
 		$try = 0;
 
 		while ($result['success'] === false && $try < 2) {
-			$endpoint = $this->discoveryManager->getShareEndpoint($protocol . $remoteDomain);
+			if ($useOcm) {
+				$endpoint = $this->discoveryManager->getOcmShareEndpoint($protocol . $remoteDomain);
+			} else {
+				$relativePath = $this->discoveryManager->getShareEndpoint($protocol . $remoteDomain);
+				$endpoint = $protocol . $remoteDomain . $relativePath . $urlSuffix . '?format=' . self::RESPONSE_FORMAT;
+			}
+
 			try {
-				$response = $client->post($protocol . $remoteDomain . $endpoint . $urlSuffix . '?format=' . self::RESPONSE_FORMAT, [
+				$response = $client->post($endpoint, [
 					'body' => $fields,
 					'timeout' => 10,
 					'connect_timeout' => 10,
 				]);
 				$result['result'] = $response->getBody();
+				$result['statusCode'] = $response->getStatusCode();
 				$result['success'] = true;
 				break;
 			} catch (\Exception $e) {
@@ -315,5 +317,66 @@ class Notifications {
 		}
 
 		return $result;
+	}
+
+	protected function sendOcmRemoteShare(Address $shareWithAddress, Address $ownerAddress, Address $sharedByAddress, $token, $name, $remote_id) {
+		$fields = [
+			'shareWith' => $shareWithAddress->getCloudId(),
+			'name' => $name,
+			'providerId' => $remote_id,
+			'owner' => $ownerAddress->getCloudId(),
+			'ownerDisplayName' => $ownerAddress->getDisplayName(),
+			'sender' => $sharedByAddress->getCloudId(),
+			'senderDisplayName' => $sharedByAddress->getDisplayName(),
+			'shareType' => 'user',
+			'resourceType' => 'file',
+			'protocol' => [
+				'name' => 'webdav',
+				'options' => [
+					'sharedSecret' => $token
+				]
+			]
+		];
+
+		$url = $shareWithAddress->getCleanHostName();
+		$result = $this->tryHttpPostToShareEndpoint($url, '', $fields, true);
+
+		if (isset($result['statusCode']) && $result['statusCode'] === 201) {
+			return true;
+		}
+		return false;
+	}
+
+	protected function sendPreOcmRemoteShare(Address $shareWithAddress, Address $ownerAddress, Address $sharedByAddress, $token, $name, $remote_id) {
+		$fields = [
+			'shareWith' => $shareWithAddress->getUserId(),
+			'token' => $token,
+			'name' => $name,
+			'remoteId' => $remote_id,
+			'owner' => $ownerAddress->getUserId(),
+			'ownerFederatedId' => $ownerAddress->getCloudId(),
+			'sharedBy' => $sharedByAddress->getUserId(),
+			'sharedByFederatedId' => $sharedByAddress->getUserId(),
+			'remote' => $this->addressHandler->generateRemoteURL(),
+		];
+		$url = $shareWithAddress->getCleanHostName();
+		$result = $this->tryHttpPostToShareEndpoint($url, '', $fields);
+		$status = \json_decode($result['result'], true);
+
+		if ($result['success'] && $this->isOcsStatusOk($status)) {
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Validate ocs response - 100 or 200 means success
+	 *
+	 * @param array $status
+	 *
+	 * @return bool
+	 */
+	private function isOcsStatusOk($status) {
+		return \in_array($status['ocs']['meta']['statuscode'], [100, 200]);
 	}
 }
