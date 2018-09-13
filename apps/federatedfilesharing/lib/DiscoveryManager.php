@@ -90,34 +90,22 @@ class DiscoveryManager {
 		if (\defined('PHPUNIT_RUN') && !$this->underTest) {
 			return $discoveredServices;
 		}
-		// Read the data from the response body
-		try {
-			$response = $this->client->get($remote . '/ocs-provider/', [
-				'timeout' => 10,
-				'connect_timeout' => 10,
-			]);
-			if ($response->getStatusCode() === 200) {
-				$decodedService = \json_decode($response->getBody(), true);
-				if (\is_array($decodedService)) {
-					$endpoints = [
-						'webdav',
-						'share',
-					];
 
-					foreach ($endpoints as $endpoint) {
-						if (isset($decodedService['services']['FEDERATED_SHARING']['endpoints'][$endpoint])) {
-							$endpointUrl = (string)$decodedService['services']['FEDERATED_SHARING']['endpoints'][$endpoint];
-							if ($this->isSafeUrl($endpointUrl)) {
-								$discoveredServices[$endpoint] = $endpointUrl;
-							}
-						}
+		$decodedService = $this->makeRequest($remote . '/ocs-provider/');
+		if (!empty($decodedService)) {
+			$endpoints = [
+				'webdav',
+				'share',
+			];
+
+			foreach ($endpoints as $endpoint) {
+				if (isset($decodedService['services']['FEDERATED_SHARING']['endpoints'][$endpoint])) {
+					$endpointUrl = (string)$decodedService['services']['FEDERATED_SHARING']['endpoints'][$endpoint];
+					if ($this->isSafeUrl($endpointUrl)) {
+						$discoveredServices[$endpoint] = $endpointUrl;
 					}
 				}
 			}
-		} catch (ClientException $e) {
-			// Don't throw any exception since exceptions are handled before
-		} catch (ConnectException $e) {
-			// Don't throw any exception since exceptions are handled before
 		}
 
 		// Write into cache
@@ -143,39 +131,59 @@ class DiscoveryManager {
 		// Default response body
 		$discoveredServices = [
 			'webdav' => '/public.php/webdav',
-			'share' => '/index.php/apps/federatedfilesharing',
+			'ocm' => '/index.php/apps/federatedfilesharing',
 		];
 
 		if (\defined('PHPUNIT_RUN') && !$this->underTest) {
 			return $discoveredServices;
 		}
-		// Read the data from the response body
+
+		$decodedService = $this->makeRequest($remote . '/ocm-provider/');
+		if (!empty($decodedService)) {
+			$discoveredServices['ocm'] = $decodedService['endPoint'];
+			$shareTypes = $discoveredServices['shareTypes'];
+			foreach ($shareTypes as $type) {
+				if ($type['name'] == 'file') {
+					$discoveredServices['webdav'] = $type['protocols']['webdav'];
+				}
+			}
+		}
+
+		// Write into cache
+		$this->cache->set('OCM' . $remote, \json_encode($discoveredServices));
+		return $discoveredServices;
+	}
+
+	/**
+	 * Send GET request and return decoded body of response on success
+	 *
+	 * @param $url
+	 *
+	 * @return array
+	 */
+	private function makeRequest($url) {
+		$decodedService = [];
 		try {
-			$response = $this->client->get($remote . '/ocm-provider/', [
-				'timeout' => 10,
-				'connect_timeout' => 10,
-			]);
+			// make timeout configurable?
+			$response = $this->client->get(
+				$url,
+				[
+					'timeout' => 10,
+					'connect_timeout' => 10,
+				]
+			);
 			if ($response->getStatusCode() === 200) {
 				$decodedService = \json_decode($response->getBody(), true);
-				if (\is_array($decodedService)) {
-					$discoveredServices['share'] = $decodedService['endPoint'];
-					$shareTypes = $discoveredServices['shareTypes'];
-					foreach ($shareTypes as $type) {
-						if ($type['name']=='file') {
-							$discoveredServices['webdav'] = $type['protocols']['webdav'];
-						}
-					}
-				}
+			}
+			if (\is_array($decodedService) === false) {
+				$decodedService = [];
 			}
 		} catch (ClientException $e) {
 			// Don't throw any exception since exceptions are handled before
 		} catch (ConnectException $e) {
 			// Don't throw any exception since exceptions are handled before
 		}
-
-		// Write into cache
-		$this->cache->set('OCM' . $remote, \json_encode($discoveredServices));
-		return $discoveredServices;
+		return $decodedService;
 	}
 
 	/**
@@ -199,12 +207,10 @@ class DiscoveryManager {
 	}
 
 	public function getOcmWebDavEndPoint($host) {
-		\OC::$server->getLogger()->warning("{$this->ocmDiscover($host)['webdav']}");
 		return $this->ocmDiscover($host)['webdav'];
 	}
 
 	public function getOcmShareEndPoint($host) {
-		\OC::$server->getLogger()->warning("{$this->ocmDiscover($host)['share']}");
-		return $this->ocmDiscover($host)['share'] . '/shares';
+		return $this->ocmDiscover($host)['ocm'];
 	}
 }

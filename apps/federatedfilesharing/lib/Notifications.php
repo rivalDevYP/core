@@ -25,6 +25,7 @@
 
 namespace OCA\FederatedFileSharing;
 
+use OCA\FederatedFileSharing\Ocm\NotificationManager;
 use OCP\AppFramework\Http;
 use OCP\BackgroundJob\IJobList;
 use OCP\Http\Client\IClientService;
@@ -126,6 +127,30 @@ class Notifications {
 	 * @throws \Exception
 	 */
 	public function requestReShare($token, $id, $shareId, $remote, $shareWith, $permission) {
+		$ocmNotificationManager = new NotificationManager();
+		$data = [
+			'shareWith' => $shareWith,
+			'senderId' => $id
+		];
+		$ocmNotification = $ocmNotificationManager->convertToOcmFileNotification($shareId, $token, 'reshare', $data);
+		$ocmFields = $ocmNotification->toArray();
+
+		$url = \rtrim(
+			$this->addressHandler->removeProtocolFromUrl($remote),
+			'/'
+		);
+		$result = $this->tryHttpPostToShareEndpoint($url, '/notifications', $ocmFields, true);
+		if (isset($result['statusCode']) && $result['statusCode'] === Http::STATUS_CREATED) {
+			$response = \json_decode($result['result'], true);
+			if (\is_array($response) && isset($response['token'], $response['providerId'])) {
+				return [
+					$response['token'],
+					(int) $response['providerId']
+				];
+			}
+			return true;
+		}
+
 		$fields = [
 			'shareWith' => $shareWith,
 			'token' => $token,
@@ -226,13 +251,28 @@ class Notifications {
 	 * @throws \Exception
 	 */
 	public function sendUpdateToRemote($remote, $remoteId, $token, $action, $data = [], $try = 0) {
+		$ocmNotificationManager = new NotificationManager();
+		$ocmNotification = $ocmNotificationManager->convertToOcmFileNotification($remoteId, $token, $action, $data);
+		$ocmFields = $ocmNotification->toArray();
+		$url = \rtrim(
+			$this->addressHandler->removeProtocolFromUrl($remote),
+			'/'
+		);
+		$result = $this->tryHttpPostToShareEndpoint($url, '/notifications', $ocmFields, true);
+		if (isset($result['statusCode']) && $result['statusCode'] === Http::STATUS_CREATED) {
+			return true;
+		}
+
 		$fields = ['token' => $token];
 		foreach ($data as $key => $value) {
 			$fields[$key] = $value;
 		}
 
-		$url = $this->addressHandler->removeProtocolFromUrl($remote);
-		$result = $this->tryHttpPostToShareEndpoint(\rtrim($url, '/'), '/' . $remoteId . '/' . $action, $fields);
+		$url = \rtrim(
+			$this->addressHandler->removeProtocolFromUrl($remote),
+			'/'
+		);
+		$result = $this->tryHttpPostToShareEndpoint($url, '/' . $remoteId . '/' . $action, $fields);
 		$status = \json_decode($result['result'], true);
 
 		if ($result['success'] && $this->isOcsStatusOk($status)) {
@@ -270,7 +310,10 @@ class Notifications {
 	 * @param string $remoteDomain
 	 * @param string $urlSuffix
 	 * @param array $fields post parameters
+	 * @param bool $useOcm send request to OCM endpoint instead of OCS
+	 *
 	 * @return array
+	 *
 	 * @throws \Exception
 	 */
 	protected function tryHttpPostToShareEndpoint($remoteDomain, $urlSuffix, array $fields, $useOcm = false) {
@@ -285,6 +328,7 @@ class Notifications {
 		while ($result['success'] === false && $try < 2) {
 			if ($useOcm) {
 				$endpoint = $this->discoveryManager->getOcmShareEndpoint($protocol . $remoteDomain);
+				$endpoint .= $urlSuffix;
 			} else {
 				$relativePath = $this->discoveryManager->getShareEndpoint($protocol . $remoteDomain);
 				$endpoint = $protocol . $remoteDomain . $relativePath . $urlSuffix . '?format=' . self::RESPONSE_FORMAT;
@@ -339,9 +383,9 @@ class Notifications {
 		];
 
 		$url = $shareWithAddress->getCleanHostName();
-		$result = $this->tryHttpPostToShareEndpoint($url, '', $fields, true);
+		$result = $this->tryHttpPostToShareEndpoint($url, '/shares', $fields, true);
 
-		if (isset($result['statusCode']) && $result['statusCode'] === 201) {
+		if (isset($result['statusCode']) && $result['statusCode'] === Http::STATUS_CREATED) {
 			return true;
 		}
 		return false;

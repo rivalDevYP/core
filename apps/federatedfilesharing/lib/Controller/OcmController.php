@@ -338,8 +338,15 @@ class OcmController extends Controller {
 						$providerId, $notification['sharedSecret']
 					);
 					// TODO: permissions not needed ???
-					$this->fedShareManager->reShare(
+					$share = $this->fedShareManager->reShare(
 						$share, $providerId, $localShareWith, 0
+					);
+					return new JSONResponse(
+						[
+							'sharedSecret' => $share->getToken(),
+							'providerId' => $share->getId()
+						],
+						Http::STATUS_CREATED
 					);
 					break;
 				case FileNotification::NOTIFICATION_TYPE_RESHARE_CHANGE_PERMISSION:
@@ -452,7 +459,7 @@ class OcmController extends Controller {
 	}
 
 	/**
-	 * Get share by id, validate it's type and token
+	 * Get share by id, validate its type and token
 	 *
 	 * @param int $id
 	 * @param string $sharedSecret
@@ -466,7 +473,7 @@ class OcmController extends Controller {
 	protected function getValidShare($id, $sharedSecret) {
 		$share = $this->federatedShareProvider->getShareById($id);
 		if ($share->getShareType() !== FederatedShareProvider::SHARE_TYPE_REMOTE) {
-			throw new BadRequestException("Share with id {$id} des not exist");
+			throw new BadRequestException("Share with id {$id} does not exist");
 		}
 
 		if ($share->getToken() !== $sharedSecret) {
