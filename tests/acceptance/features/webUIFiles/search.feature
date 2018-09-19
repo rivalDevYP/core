@@ -17,5 +17,8 @@ So that I can find needed files quickly
     When the user searches for "lorem" using the webUI
     Then the file "lorem.txt" should be listed on the webUI
     And the file "lorem-big.txt" should be listed on the webUI
-    And the file "lorem.txt" should be listed in the search results in other folders section on the webUI
-    And the file "lorem-big.txt" should be listed in the search results in other folders section on the webUI
+    And the file "lorem.txt" with the path "/simple-folder" should be listed in the search results in other folders section on the webUI
+    And the file "lorem-big.txt" with the path "/simple-folder" should be listed in the search results in other folders section on the webUI
+    And the file "lorem.txt" with the path "/0" should be listed in the search results in other folders section on the webUI
+    And the file "lorem.txt" with the path "/strängé नेपाली folder" should be listed in the search results in other folders section on the webUI
+    And the file "lorem-big.txt" with the path "/strängé नेपाली folder" should be listed in the search results in other folders section on the webUI

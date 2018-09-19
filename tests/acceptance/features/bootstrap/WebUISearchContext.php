@@ -22,7 +22,6 @@
 
 use Behat\Behat\Context\Context;
 use Behat\Behat\Hook\Scope\BeforeScenarioScope;
-use Behat\Gherkin\Node\PyStringNode;
 use Behat\MinkExtension\Context\RawMinkContext;
 use Page\SearchResultInOtherFoldersPage;
 use Page\OwncloudPage;
@@ -81,6 +80,20 @@ class WebUISearchContext extends RawMinkContext implements Context {
 		$this->ownCloudPage->search($this->getSession(), $searchTerm);
 	}
 
+	/**
+	 * @Then the file :fileName with the path :path should be listed in the search results in other folders section on the webUI
+
+	 * @param string $fileName
+	 */
+	public function theFileShouldBeListedSearchResultOtherFolders($fileName, $path) {
+		$fileRow = $this->searchResultInOtherFoldersPage->findFileRowByNameAndPath(
+			$fileName, $path, $this->getSession()
+		);
+		PHPUnit_Framework_Assert::assertNotNull(
+			$fileRow, __METHOD__ .
+			" could not find file with name:'$fileName' and path:'$path'"
+		);
+	}
 	/**
 	 * This will run before EVERY scenario.
 	 * It will set the properties for this object.

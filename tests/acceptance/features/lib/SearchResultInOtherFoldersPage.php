@@ -28,18 +28,27 @@ namespace Page;
 class SearchResultInOtherFoldersPage extends FilesPageBasic {
 	protected $emptyContentXpath = ".//div[@id='searchresults']//div[@class='emptycontent']";
 	protected $fileListXpath = ".//div[@id='searchresults']//tbody";
+	protected $fileNameMatchXpath = "//div[@class='name' and .=%s]";
+	protected $fileNamesXpath = "//div[@class='name']";
+	protected $filePathInRowXpath = "//div[@class='path']";
 	
 	protected function getEmptyContentXpath() {
 		return $this->emptyContentXpath;
 	}
 
 	protected function getFileNameMatchXpath() {
+		return $this->fileNameMatchXpath;
 	}
 
 	protected function getFileNamesXpath() {
+		return $this->fileNamesXpath;
 	}
 
 	protected function getFileListXpath() {
 		return $this->fileListXpath;
+	}
+	
+	protected function getFilePathInRowXpath() {
+		return $this->filePathInRowXpath;
 	}
 }
